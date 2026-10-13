@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VectorFlow AI Assistant</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col">
+    <header class="border-b border-slate-800 bg-slate-950/50 backdrop-blur p-4">
+        <div class="max-w-4xl mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold text-sky-400">⚡ VectorFlow RAG</h1>
+            <span class="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-1 rounded">System Online</span>
+        </div>
+    </header>
+
+    <main class="max-w-4xl w-full mx-auto p-4 flex-1 flex flex-col gap-4">
+        <!-- Upload Box -->
+        <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4 flex items-center justify-between">
+            <input type="file" id="fileInput" accept=".pdf" class="text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-sky-500 file:text-white hover:file:bg-sky-600 cursor-pointer">
+            <button onclick="uploadDoc()" id="uploadBtn" class="bg-sky-600 hover:bg-sky-500 text-white font-medium px-4 py-2 rounded-lg text-sm">Upload & Index</button>
+        </div>
+        <p id="uploadStatus" class="text-xs text-slate-400 -mt-2 px-1"></p>
+
+        <!-- Chat Area -->
+        <div id="chatBox" class="flex-1 bg-slate-950/40 border border-slate-800 rounded-xl p-4 overflow-y-auto space-y-4 min-h-[400px]">
+            <div class="p-3 bg-slate-800/80 rounded-lg max-w-[80%] text-sm">
+                👋 Hello! VectorFlow ready hai. Upar se PDF upload karo aur neeche se koi bhi sawal poocho.
+            </div>
+        </div>
+
+        <!-- Input Box -->
+        <div class="flex gap-2">
+            <input type="text" id="queryInput" placeholder="Ask a question about the document..." class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-sky-500 text-white">
+            <button onclick="askQuestion()" id="askBtn" class="bg-sky-600 hover:bg-sky-500 text-white px-6 py-3 rounded-lg text-sm font-semibold">Send</button>
+        </div>
+    </main>
+
+    <script>
+        async function uploadDoc() {
+            const input = document.getElementById('fileInput');
+            const status = document.getElementById('uploadStatus');
+            const btn = document.getElementById('uploadBtn');
+            if (!input.files[0]) return alert('Pehle PDF select karo!');
+
+            const formData = new FormData();
+            formData.append('file', input.files[0]);
+            btn.disabled = true;
+            status.textContent = 'Uploading and chunking document...';
+
+            try {
+                const res = await fetch('/api/v1/upload', { method: 'POST', body: formData });
+                const data = await res.json();
+                status.textContent = '✅ Document indexed successfully! Ab sawal pooch sakte ho.';
+            } catch(e) {
+                status.textContent = '❌ Upload failed: ' + e;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        async function askQuestion() {
+            const input = document.getElementById('queryInput');
+            const chatBox = document.getElementById('chatBox');
+            const btn = document.getElementById('askBtn');
+            const query = input.value.trim();
+            if (!query) return;
+
+            // User message
+            chatBox.innerHTML += `<div class="p-3 bg-sky-600/30 border border-sky-500/30 rounded-lg max-w-[80%] ml-auto text-sm">${query}</div>`;
+            input.value = '';
+            btn.disabled = true;
+
+            // Loading state
+            const loadingId = 'loading-' + Date.now();
+            chatBox.innerHTML += `<div id="${loadingId}" class="p-3 bg-slate-800 rounded-lg max-w-[80%] text-sm text-slate-400">⚡ Searching context & generating answer...</div>`;
+            chatBox.scrollTop = chatBox.scrollHeight;
+
+            try {
+                const res = await fetch('/api/v1/ask', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question: query, top_k: 3 })
+                });
+                const data = await res.json();
+                document.getElementById(loadingId).remove();
+
+                const answerText = (data.answer || "No response").replace(/\n/g, '<br>');
+                chatBox.innerHTML += `
+                    <div class="p-3 bg-slate-800/90 rounded-lg max-w-[85%] text-sm space-y-2">
+                        <div>${answerText}</div>
+                        <div class="text-[10px] text-slate-500 border-t border-slate-700/50 pt-1">🔍 Retrieved from ${data.sources_used || 0} chunks</div>
+                    </div>`;
+            } catch(e) {
+                document.getElementById(loadingId).innerText = 'Error: ' + e;
+            } finally {
+                btn.disabled = false;
+                chatBox.scrollTop = chatBox.scrollHeight;
+            }
+        }
+
+        document.getElementById('queryInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') askQuestion();
+        });
+    </script>
+</body>
+</html>
