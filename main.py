@@ -229,7 +229,7 @@ User Question:
 Answer:"""
 
     try:
-        model = genai.GenerativeModel("gemini-3.8-flash")
+        model = genai.GenerativeModel("gemini-1.5-flash")
         response = model.generate_content(prompt)
         ai_answer = response.text
     except Exception as e:
