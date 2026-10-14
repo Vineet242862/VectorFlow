@@ -135,29 +135,32 @@ class RAGRequest(BaseModel):
 def home():
     return {"message": "VectorFlow server is running successfully!"}
 
-@app.post("/api/v1/upload", status_code=202)
-async def upload_document(
-    background_tasks: BackgroundTasks, 
-    file: UploadFile = File(...), 
+@app.post("/api/v1/upload")
+def upload_document(
+    file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
     file_path = os.path.join(UPLOAD_DIR, file.filename)
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-        
-    db_doc = DocumentModel(filename=file.filename, saved_path=file_path, status="PROCESSING")
+    
+    db_doc = DocumentModel(
+        filename=file.filename,
+        saved_path=file_path,
+        status="PROCESSING"
+    )
     db.add(db_doc)
     db.commit()
     db.refresh(db_doc)
-    
-    # Task ko background queue me push karo
-    background_tasks.add_task(process_document_pipeline, db_doc.id, file_path)
-    
+
+    # Directly run pipeline taaki chunks turant ready ho jayein
+    process_document_pipeline(db_doc.id, file_path)
+
     return {
         "document_id": db_doc.id,
         "filename": file.filename,
-        "status": "PROCESSING",
-        "message": "File uploaded successfully. Processing started in background."
+        "status": "COMPLETED",
+        "message": "File indexed successfully!"
     }
 
 @app.get("/api/v1/documents/{document_id}/status")
@@ -210,33 +213,37 @@ def search_similar(request: SearchRequest, db: Session = Depends(get_db)):
 @app.post("/api/v1/ask")
 def ask_question_rag(request: RAGRequest, db: Session = Depends(get_db)):
     search_res = search_similar(SearchRequest(query=request.question, top_k=request.top_k), db=db)
-    if "error" in search_res:
-        return search_res
-        
-    retrieved_chunks = [r["text"] for r in search_res["results"]]
-    context_text = "\n\n---\n\n".join(retrieved_chunks)
     
-    prompt = f"""You are VectorFlow AI Assistant.
-Answer the user's question clearly using the provided context as primary reference.
-If the context only mentions the topic or question without a full explanation, provide a complete, clear answer along with code examples.
+    retrieved_chunks = []
+    if "results" in search_res and search_res["results"]:
+        positive_matches = [r["text"] for r in search_res["results"] if r.get("score", 0) > 0]
+        retrieved_chunks = positive_matches if positive_matches else [r["text"] for r in search_res["results"][:2]]
 
-Context from documents:
+    # Agar koi word match na ho, toh database se default chunks context me do
+    if not retrieved_chunks:
+        all_db_chunks = db.query(ChunkModel).limit(3).all()
+        retrieved_chunks = [c.text for c in all_db_chunks]
+
+    context_text = "\n\n---\n\n".join(retrieved_chunks)
+
+    prompt = f"""You are VectorFlow AI Assistant. Answer the user's question clearly. 
+If relevant information exists in the provided context, use it as primary reference.
+Context:
 {context_text}
 
-User Question:
-{request.question}
-
+User Question: {request.question}
 Answer:"""
 
     try:
         model = genai.GenerativeModel("gemini-1.5-flash")
-        response = model.generate_content(prompt)
-        ai_answer = response.text
+        res = model.generate_content(prompt)
+        ai_answer = res.text
     except Exception as e:
         ai_answer = f"LLM Generation Error: {str(e)}"
-        
+
     return {
         "question": request.question,
         "answer": ai_answer,
+        "response": ai_answer,
         "sources_used": len(retrieved_chunks)
     }
